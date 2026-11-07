@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gravador Inteligente</title>
+<style>
+  :root { --bg:#0f1419; --card:#18202a; --line:#2a3644; --txt:#e6edf3; --mut:#8b9aab;
+          --green:#2ea043; --yellow:#d4a72c; --red:#e5534b; --blue:#3b82f6; --gray:#6b7785; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; font-weight:650; }
+  .pill { padding:3px 12px; border-radius:99px; font-weight:600; font-size:12px; background:var(--gray); }
+  .pill.gravando { background:var(--blue); } .pill.trocando,.pill.iniciando,.pill.finalizando { background:var(--yellow); color:#111; }
+  .pill.sem_fonte { background:var(--red); } .pill.agendada { background:#7c5cff; }
+  main { padding:18px 22px; display:grid; gap:16px; max-width:1180px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .stat .v { font-size:22px; font-weight:650; } .stat .l { color:var(--mut); font-size:12px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; color:var(--mut); font-size:12px; }
+  input,select { background:#0d1218; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; min-width:0; }
+  input[type=checkbox] { min-width:auto; }
+  button { background:#223041; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  button:hover { background:#2b3b50; } button.go { background:var(--green); border-color:var(--green); font-weight:650; }
+  button.stop { background:var(--red); border-color:var(--red); font-weight:650; } button.sm { padding:3px 9px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--mut); font-weight:500; font-size:12px; }
+  .dot { display:inline-block; width:12px; height:12px; border-radius:50%; background:var(--gray); margin-right:8px; vertical-align:middle; }
+  .dot.recording { background:var(--blue); box-shadow:0 0 0 4px #3b82f633; animation:p 1.6s infinite; } .dot.ok { background:var(--green); }
+  .dot.warn { background:var(--yellow); } .dot.down { background:var(--red); } .dot.testing { background:var(--gray); animation:p 1s infinite; }
+  @keyframes p { 50% { opacity:.45; } }
+  .mut { color:var(--mut); } .small { font-size:12px; } .url { max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--mut); font-size:12px; }
+  .banner { background:#3a2b10; border:1px solid var(--yellow); border-radius:10px; padding:12px 16px; }
+  ul.log { list-style:none; padding:0; margin:0; max-height:200px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  ul.log li { padding:3px 0; border-bottom:1px dashed #243040; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; }
+  details summary { cursor:pointer; color:var(--mut); } #settings { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; margin-top:12px; }
+  .err { color:var(--red); } .ok { color:#5fd47a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏒 Gravador Inteligente</h1>
+  <span id="pill" class="pill">parada</span>
+  <span id="verdict" class="mut small"></span>
+</header>
+<main>
+  <div id="incomplete"></div>
+
+  <section class="card">
+    <h2>Gravação</h2>
+    <div class="row">
+      <label style="flex:2;min-width:240px">Nome da partida (equipes, liga, data)
+        <input id="name" placeholder="Ex.: AHL Hershey x Hartford 2026-11-02"></label>
+      <label style="flex:2;min-width:220px">Pasta de gravações <input id="out_dir"></label>
+      <label>Qualidade
+        <select id="quality"><option value="best">Melhor disponível</option><option value="1080">1080p</option>
+          <option value="720">720p</option><option value="480">480p</option><option value="worst">Menor</option></select></label>
+      <label>Agendar início (opcional) <input id="schedule" type="datetime-local"></label>
+      <button id="start" class="go">● Iniciar</button>
+      <button id="stop" class="stop">■ Parar</button>
+    </div>
+  </section>
+
+  <section class="stats card">
+    <div class="stat"><div class="v" id="s_src">—</div><div class="l">Transmissão em uso</div></div>
+    <div class="stat"><div class="v" id="s_time">0:00:00</div><div class="l">Tempo gravado</div></div>
+    <div class="stat"><div class="v" id="s_size">0 B</div><div class="l">Espaço ocupado</div></div>
+    <div class="stat"><div class="v" id="s_fail">0</div><div class="l">Falhas detectadas</div></div>
+    <div class="stat"><div class="v" id="s_sw">0</div><div class="l">Trocas</div></div>
+    <div class="stat"><div class="v" id="s_disk">—</div><div class="l">Disco livre</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Fontes (ordem = prioridade)</h2>
+    <table>
+      <thead><tr><th>Status</th><th>Fonte</th><th>Última verificação</th><th>Falhas</th><th></th></tr></thead>
+      <tbody id="sources"></tbody>
+    </table>
+    <div class="row" style="margin-top:14px">
+      <label style="flex:3;min-width:260px">Link (página, .m3u8, .mpd ou URL do FFmpeg) <input id="new_url" placeholder="https://…"></label>
+      <label style="flex:1;min-width:140px">Apelido <input id="new_label" placeholder="Principal / Reserva 1"></label>
+      <button id="add">+ Adicionar fonte</button>
+    </div>
+    <p class="mut small" style="margin-bottom:0">
+      <span class="dot recording"></span>gravando &nbsp; <span class="dot ok"></span>funcionando &nbsp;
+      <span class="dot warn"></span>instável/buffering &nbsp; <span class="dot down"></span>indisponível &nbsp;
+      <span class="dot"></span>em espera / não testada
+    </p>
+  </section>
+
+  <div class="grid2">
+    <section class="card"><h2>Histórico de trocas</h2>
+      <table><thead><tr><th>Hora</th><th>De → Para</th><th>Motivo</th><th>Lacuna</th></tr></thead><tbody id="switches"></tbody></table>
+      <div id="noswitch" class="mut small">Nenhuma troca ainda.</div></section>
+    <section class="card"><h2>Notificações</h2><ul class="log" id="notes"></ul></section>
+  </div>
+
+  <section class="card"><details><summary>Configurações avançadas (detecção, trocas, retorno, disco, notificações)</summary>
+    <div id="settings"></div><div class="row" style="margin-top:12px"><button id="save">Salvar configurações</button></div>
+  </details></section>
+  <p class="mut small">Este programa não contorna DRM, login ou paywall. Fontes protegidas serão marcadas como indisponíveis com o motivo.</p>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+const $ = id => document.getElementById(id);
+const fmtDur = s => { s=Math.max(0,Math.floor(s||0)); return `${Math.floor(s/3600)}:${String(Math.floor(s%3600/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; };
+const fmtB = n => { const u=['B','KB','MB','GB','TB']; let i=0; n=n||0; while(n>=1024&&i<4){n/=1024;i++;} return (i?n.toFixed(1):n.toFixed(0))+' '+u[i]; };
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function post(path, body={}) {
+  const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(body)});
+  const j = await r.json(); if(!j.ok) alert(j.error||'erro'); return j;
+}
+const STATUS_TXT = {recording:'Gravando', ok:'Funcionando', warn:'Instável', down:'Indisponível', testing:'Testando…', idle:'Em espera'};
+let settingsBuilt = false, focusedInputs = new Set();
+
+function buildSettings(s) {
+  const box = $('settings'); box.innerHTML = '';
+  for (const [k,v] of Object.entries(s)) {
+    const l = document.createElement('label'); l.textContent = k;
+    let el;
+    if (typeof v === 'boolean') { el = document.createElement('input'); el.type='checkbox'; el.checked=v; }
+    else if (Array.isArray(v)) { el = document.createElement('input'); el.value = v.join(', '); }
+    else { el = document.createElement('input'); el.value = v; if (typeof v==='number') el.type='number'; el.step='any'; }
+    el.dataset.key = k; l.appendChild(el); box.appendChild(l);
+  }
+}
+async function refresh() {
+  let st; try { const r = await fetch('/api/state',{headers:{'X-Token':TOKEN}}); st = await r.json(); } catch(e){ return; }
+  if (st.error) return;
+  const cfg = st.config, rec = st.recording, live = rec && rec.running;
+  if (document.activeElement !== $('name')) $('name').value = live ? rec.name : cfg.name;
+  if (document.activeElement !== $('out_dir')) $('out_dir').value = cfg.out_dir;
+  if (document.activeElement !== $('quality')) $('quality').value = cfg.settings.quality;
+  if (!settingsBuilt) { buildSettings(cfg.settings); settingsBuilt = true; }
+  $('name').disabled = $('out_dir').disabled = $('quality').disabled = $('schedule').disabled = live;
+  $('start').disabled = live; $('stop').disabled = !live;
+  const state = rec ? rec.state : 'parada';
+  $('pill').textContent = state.replace('_',' '); $('pill').className = 'pill ' + state;
+  $('verdict').textContent = live && rec.verdict && rec.verdict.reasons.length ? rec.verdict.reasons.join(' · ') : '';
+  $('s_src').textContent = rec && rec.active_source ? rec.active_source : '—';
+  $('s_time').textContent = fmtDur(rec ? rec.recorded_seconds : 0);
+  $('s_size').textContent = fmtB(rec ? rec.bytes : 0);
+  $('s_fail').textContent = rec ? rec.failures : 0;
+  $('s_sw').textContent = rec ? rec.switches.length : 0;
+  $('s_disk').textContent = rec ? rec.disk_free_gb + ' GB' : '—';
+
+  const live_src = {}; if (rec) rec.sources.forEach(s => live_src[s.id] = s);
+  const rows = cfg.sources.map((s,i) => {
+    const l = live_src[s.id] || {}; const status = l.status || (s.test && s.test.running ? 'testing' : s.test ? (s.test.ok?'ok':'down') : 'idle');
+    let reason = l.reason || (s.test && !s.test.running ? (s.test.ok ? 'teste OK' + (s.test.info&&s.test.info.video ? ` — ${s.test.info.video.width}x${s.test.info.video.height} ${s.test.info.video.codec}` : '') + (s.test.bitrate_kbps?`, ${s.test.bitrate_kbps} kbps`:'') : s.test.reason) : '');
+    const age = l.last_check_s != null ? l.last_check_s + ' s atrás' : (s.test && s.test.at ? Math.round(Date.now()/1000 - s.test.at)+' s atrás' : '—');
+    return `<tr><td style="white-space:nowrap"><span class="dot ${status}"></span>${STATUS_TXT[status]||status}</td>
+      <td><b>${i===0?'① ':''}${esc(s.label||('Fonte '+(i+1)))}</b>${l.active?' <span class="mut">(em uso)</span>':''}<div class="url" title="${esc(s.url)}">${esc(s.url)}</div>
+        <div class="small ${status==='down'?'err':'mut'}">${esc(reason)}</div></td>
+      <td>${age}</td><td>${l.failures||0}</td>
+      <td style="white-space:nowrap"><button class="sm" onclick="mv('${s.id}',-1)">↑</button> <button class="sm" onclick="mv('${s.id}',1)">↓</button>
+        <button class="sm" onclick="tst('${s.id}')" ${live?'':''}>Testar</button>
+        <label style="display:inline-flex;flex-direction:row;gap:4px;align-items:center"><input type="checkbox" ${s.enabled?'checked':''} onchange="tg('${s.id}',this.checked)">ativa</label>
+        <button class="sm" onclick="rm('${s.id}')">✕</button></td></tr>`;
+  }).join('');
+  $('sources').innerHTML = rows || '<tr><td colspan="5" class="mut">Nenhuma fonte cadastrada.</td></tr>';
+
+  const sw = rec ? rec.switches : [];
+  $('noswitch').style.display = sw.length ? 'none' : '';
+  $('switches').innerHTML = sw.slice().reverse().map(x => `<tr><td>${esc(x.ts.slice(11,19))}</td><td>${esc(x.de)} → <b>${esc(x.para)}</b></td>
+     <td class="small">${esc(x.motivo)}</td><td>${x.interrupcao_s}s</td></tr>`).join('');
+  $('notes').innerHTML = (rec ? rec.notifications.slice().reverse() : []).map(t => `<li>${esc(t)}</li>`).join('');
+
+  $('incomplete').innerHTML = st.incomplete.length ? `<div class="banner"><b>Gravação incompleta detectada.</b> O programa foi encerrado de forma inesperada.
+     ${st.incomplete.map(x => `<div style="margin-top:8px">${esc(x.name)} <span class="mut small">(${esc(x.path)})</span>
+       <button class="sm" onclick="rc('${esc(x.path).replace(/\\/g,'\\\\')}',false)">Recuperar e juntar</button>
+       <button class="sm" onclick="rc('${esc(x.path).replace(/\\/g,'\\\\')}',true)">Recuperar e normalizar formato</button></div>`).join('')}</div>` : '';
+}
+const mv=(id,d)=>post('/api/source/move',{id,delta:d}).then(refresh), tst=id=>post('/api/source/test',{id}).then(refresh),
+  tg=(id,e)=>post('/api/source/toggle',{id,enabled:e}), rm=id=>confirm('Remover esta fonte?')&&post('/api/source/remove',{id}).then(refresh),
+  rc=(path,n)=>post('/api/recover',{path,normalize:n}).then(j=>{ if(j.ok) alert('Recuperação concluída. Veja relatorio.md na pasta da gravação.'); refresh(); });
+$('add').onclick = async()=>{ if(!$('new_url').value.trim()) return; await post('/api/source/add',{url:$('new_url').value,label:$('new_label').value}); $('new_url').value=$('new_label').value=''; refresh(); };
+async function saveBasic(){ await post('/api/config',{name:$('name').value,out_dir:$('out_dir').value,settings:{quality:$('quality').value}}); }
+$('start').onclick = async()=>{ await saveBasic(); const s=$('schedule').value; await post('/api/start',{schedule_at:s||null}); refresh(); };
+$('stop').onclick = async()=>{ if(confirm('Parar a gravação e gerar o arquivo final?')) { await post('/api/stop'); refresh(); } };
+$('save').onclick = async()=>{ const o={}; document.querySelectorAll('#settings [data-key]').forEach(e=>o[e.dataset.key]= e.type==='checkbox'?e.checked:e.value);
+  const j = await post('/api/config',{settings:o}); if(j.ok) alert('Configurações salvas.'); };
+['name','out_dir'].forEach(id=>$(id).addEventListener('change',saveBasic));
+refresh(); setInterval(refresh, 1000);
+</script>
+</body>
+</html>
