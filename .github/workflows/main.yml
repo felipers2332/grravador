@@ -1,1 +1,67 @@
+name: Gerar executavel Windows
 
+# Gera Gravador-Windows.zip (Gravador.exe + FFmpeg embutido). Nao precisa de Python na sua maquina.
+# Como usar: aba "Actions" > "Gerar executavel Windows" > "Run workflow" > baixe o arquivo em "Artifacts".
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyInstaller
+        run: pip install pyinstaller
+
+      - name: Baixar FFmpeg para Windows
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          $d = Get-ChildItem ffmpeg_tmp | Select-Object -First 1
+          New-Item -ItemType Directory -Path build_ffmpeg | Out-Null
+          Copy-Item "$($d.FullName)\bin\ffmpeg.exe" build_ffmpeg
+          Copy-Item "$($d.FullName)\bin\ffprobe.exe" build_ffmpeg
+          Copy-Item "$($d.FullName)\LICENSE.txt" build_ffmpeg -ErrorAction SilentlyContinue
+
+      - name: Compilar
+        run: >
+          pyinstaller --noconfirm --onedir --console --name Gravador
+          --add-data "gravador/ui.html;gravador"
+          --exclude-module playwright --exclude-module tkinter --exclude-module pytest
+          gravador_app.py
+
+      - name: Montar pacote (FFmpeg ao lado do executavel)
+        shell: pwsh
+        run: |
+          Copy-Item build_ffmpeg dist\Gravador\ffmpeg -Recurse
+          Copy-Item LEIA-ME-EXE.txt dist\Gravador\LEIA-ME.txt
+          Copy-Item README.md dist\Gravador\README.md
+          Copy-Item ARQUITETURA.md dist\Gravador\ARQUITETURA.md
+
+      - name: Teste do executavel (precisa achar e rodar o FFmpeg embutido)
+        run: dist\Gravador\Gravador.exe check
+
+      - name: Teste de gravacao real com o executavel
+        shell: pwsh
+        run: |
+          # gera 40 s de video de teste e serve como "transmissao" em loop via arquivo local
+          dist\Gravador\ffmpeg\ffmpeg.exe -y -loglevel error -f lavfi -i "testsrc2=size=320x240:rate=15" -f lavfi -i "sine=frequency=440" -t 40 -c:v libx264 -g 15 -c:a aac teste.ts
+          dist\Gravador\Gravador.exe record -n "Teste CI" -o saida -s "$PWD\teste.ts" --segment 3 --duration 12 --set require_audio=true
+          if (-not (Get-ChildItem saida -Recurse -Filter *.ts)) { throw "nenhum segmento gravado" }
+
+      - name: Compactar
+        shell: pwsh
+        run: Compress-Archive -Path dist\Gravador -DestinationPath Gravador-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gravador-Windows
+          path: Gravador-Windows.zip
